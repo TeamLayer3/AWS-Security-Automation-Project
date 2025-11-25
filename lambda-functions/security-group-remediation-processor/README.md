@@ -1,5 +1,5 @@
 ## 1. 함수 개요 (Overview)
-이 Lambda 함수는 탐지된 고위험 보안 그룹 변경 사항에 대해 **자동 대응(Auto-Remediation)**을 수행하는 실행 엔진임
+이 Lambda 함수는 탐지된 고위험 보안 그룹 변경 사항에 대해 **자동 대응(Auto-Remediation)** 을 수행하는 실행 엔진임
 
 `SecurityAlertProcessor`가 위험을 감지하여 SQS에 메시지를 넣으면, 이 함수가 트리거되어 다음 작업을 수행함
 1.  **자동 차단:** EC2 API를 호출하여 위험한 인바운드 규칙(예: SSH 전체 개방)을 즉시 제거(Revoke)
