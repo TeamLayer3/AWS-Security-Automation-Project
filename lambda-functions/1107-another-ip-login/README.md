@@ -23,8 +23,8 @@ EventBridge(CloudTrail 기반)
 다음 두 가지 이벤트 외에는 모두 무시한다.
 | eventSource          | eventName    | 설명        |
 | -------------------- | ------------ | --------- |
-| signin.amazonaws.com | ConsoleLogin | 콘솔 로그인 시도 |
-| sts.amazonaws.com    | AssumeRole   | STS 역할 전환 |
+| `signin.amazonaws.com` | `ConsoleLogin` | 콘솔 로그인 시도 |
+| `sts.amazonaws.com`    | `AssumeRole`   | STS 역할 전환 |
 
 ### 동작 조건
 - sourceIPAddress가 AllowList에 없고
@@ -54,13 +54,13 @@ KnownIp 테이블에 처음 등장한 IP일 경우
 ## 4. 환경 변수 (Environment Variables)
 | 이름                | 예시                                                                                                                       | 설명                      |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------- |
-| CONNECTIONS_TABLE | WebSocketConnections_v2                                                                                                     | WebSocket 연결 목록 저장      |
-| WS_ENDPOINT       | [https://egtwu3mkhb.execute-api.us-east-1.amazonaws.com/prod](https://egtwu3mkhb.execute-api.us-east-1.amazonaws.com/prod) | WebSocket APIGW 주소      |
-| KNOWN_TABLE       | KnownIps                                                                                                                 | 신규 IP 기록 테이블            |
-| WINDOW_DAYS       | 30                                                                                                                       | IP TTL 및 lastSeen 유지 기간 |
-| ALLOW_CIDRS       | 10.0.0.0/8, 192.168.0.0/16                                                                                               | 허용된 IP 대역               |
-| SCOPE             | principal / account / global                                                                                             | 신규 IP 판단 단위             |
-| INCIDENT_TABLE    | Incident                                                                                                                 | 인시던트 히스토리 저장            |
+| CONNECTIONS_TABLE | `WebSocketConnections_v2`                                                                                                     | WebSocket 연결 목록 저장      |
+| WS_ENDPOINT       | `https://egtwu3mkhb.execute-api.us-east-1.amazonaws.com/prod` | WebSocket APIGW 주소      |
+| KNOWN_TABLE       | `KnownIps`                                                                                                                 | 신규 IP 기록 테이블            |
+| WINDOW_DAYS       | `30`                                                                                                                       | IP TTL 및 lastSeen 유지 기간 |
+| ALLOW_CIDRS       | `10.0.0.0/8, 192.168.0.0/16`                                                                                               | 허용된 IP 대역               |
+| SCOPE             | `principal / account / global`                                                                                             | 신규 IP 판단 단위             |
+| INCIDENT_TABLE    | `Incident`                                                                                                                 | 인시던트 히스토리 저장            |
 
 ---
 ## 5. 사용 리소스 / 의존성 (Dependencies)
