@@ -40,11 +40,11 @@ def update_incident_status_in_db(incident_id: str, new_status: str) -> bool:
     Incident DB에서 특정 인시던트의 상태를 업데이트합니다.
     """
     if not INCIDENT_TABLE_NAME:
-        print("❌ ERROR: INCIDENT_TABLE_NAME 환경 변수가 설정되지 않았습니다")
+        print("ERROR: INCIDENT_TABLE_NAME 환경 변수가 설정되지 않았습니다")
         return False
     
     if not incident_id:
-        print("❌ ERROR: incident_id가 누락되어 상태를 업데이트할 수 없습니다")
+        print("ERROR: incident_id가 누락되어 상태를 업데이트할 수 없습니다")
         return False
 
     table = DYNAMODB_CLIENT.Table(INCIDENT_TABLE_NAME)
@@ -60,22 +60,22 @@ def update_incident_status_in_db(incident_id: str, new_status: str) -> bool:
                 ':updated_at': now_iso
             }
         )
-        print(f"✅ Incident DB UPDATE recorded: {incident_id} -> {new_status}")
+        print(f"Incident DB UPDATE recorded: {incident_id} -> {new_status}")
         return True
 
     except ClientError as e:
         error_code = e.response['Error']['Code']
-        print(f"❌ DynamoDB UpdateItem ClientError ({error_code}): {e}")
+        print(f"DynamoDB UpdateItem ClientError ({error_code}): {e}")
         return False
     except Exception as e:
-        print(f"❌ Unexpected ERROR updating Incident DB: {e}")
+        print(f"Unexpected ERROR updating Incident DB: {e}")
         return False
 
 # ===============================================
 # 조치 및 웹소켓 전송 함수
 # ===============================================
 
-def generate_remediation_json(group_id, status, rules_to_revoke):
+def generate_remediation_json(group_id, status, rules_to_revoke, incident_id=None):
     action_type = "보안 그룹 규칙 제거"
     port_list = sorted(set(rule.get('FromPort') for rule in rules_to_revoke if rule.get('FromPort')))
     
@@ -87,21 +87,22 @@ def generate_remediation_json(group_id, status, rules_to_revoke):
         port_str = "알 수 없음"
     
     playbook_name = f"고위험 포트 {port_str} 차단"
-
     time_str = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + 'Z'
-    
+
     return {
       "time": time_str,
       "action": action_type, 
       "target": group_id,
       "playbook": playbook_name,
-      "status": status 
+      "status": status,
+      "incident_id": incident_id,         
+      "incident_status": "MITIGATED" if status == "SUCCEEDED" else "PROCESSING" 
     }
 
 def post_remediation_status(json_data):
     """지정된 웹소켓 엔드포인트에 대응 상태 JSON을 전송"""
     if not REMEDIATION_WS_ENDPOINT:
-        print("❌ ERROR: REMEDIATION_WS_ENDPOINT 환경 변수가 설정되지 않았습니다.")
+        print("ERROR: REMEDIATION_WS_ENDPOINT 환경 변수가 설정되지 않았습니다.")
         return False
 
     table = DYNAMODB_CLIENT.Table(REMEDIATION_CONNECTIONS_TABLE)
@@ -132,13 +133,13 @@ def post_remediation_status(json_data):
                 if '410' in str(e):
                     table.delete_item(Key={'connectionId': connection_id})
                 else:
-                    print(f"❌ Failed to post message to {connection_id}: {e}")
+                    print(f"Failed to post message to {connection_id}: {e}")
                 
         print(f"DEBUG: Remediation Status Sent to WS: {json_data['status']} ({success_count} connections)")
         return True 
 
     except Exception as e:
-        print(f"❌ ERROR: Failed to scan DB or post status to websocket: {e}")
+        print(f"ERROR: Failed to scan DB or post status to websocket: {e}")
         return False
 
 def revoke_security_group_ingress_rule(sg_id, rules_to_revoke, ec2_client):
@@ -146,7 +147,7 @@ def revoke_security_group_ingress_rule(sg_id, rules_to_revoke, ec2_client):
     보안 그룹 ID와 인바운드 규칙 목록을 받아 해당 규칙을 제거합니다.
     """
     if not rules_to_revoke:
-        print(f"⚠️ Revoke 요청에 규칙이 없습니다. 아무것도 제거하지 않습니다.")
+        print(f"Revoke 요청에 규칙이 없습니다. 아무것도 제거하지 않습니다.")
         return False
 
     try:
@@ -165,10 +166,10 @@ def revoke_security_group_ingress_rule(sg_id, rules_to_revoke, ec2_client):
 
     except ClientError as e:
         error_code = e.response['Error']['Code']
-        print(f"❌ CRITICAL ERROR during revoke for {sg_id}: {error_code} - {e}")
+        print(f"CRITICAL ERROR during revoke for {sg_id}: {error_code} - {e}")
         return False
     except Exception as e:
-        print(f"❌ UNEXPECTED ERROR during revoke for {sg_id}: {e}")
+        print(f"UNEXPECTED ERROR during revoke for {sg_id}: {e}")
         return False
 
 # ===============================================
@@ -182,7 +183,7 @@ def lambda_handler(event, context):
     print(f"Received remediation request: {json.dumps(event)}")
 
     if 'Records' not in event or not event['Records']:
-        print("⚠️ SQS Records가 이벤트에 포함되어 있지 않습니다. 조치 중단.")
+        print("SQS Records가 이벤트에 포함되어 있지 않습니다. 조치 중단.")
         return {'statusCode': 400, 'body': 'No SQS records'}
     
     # SQS 레코드에서 메시지 본문(Payload) 추출
@@ -199,13 +200,13 @@ def lambda_handler(event, context):
     incident_id = remediation_request.get('incidentId')
     
     if not sg_id or not rules_to_revoke:
-        print("⚠️ 필수 데이터 (groupId 또는 remediationRules) 누락. 조치 중단.")
+        print("필수 데이터 (groupId 또는 remediationRules) 누락. 조치 중단.")
         return {'statusCode': 400, 'body': 'Missing data'}
 
     ec2_client = get_ec2_client()
     
     # 1. 대응 상태 알림 (TRIGGERED) 전송
-    remediation_event_data_triggered = generate_remediation_json(sg_id, "TRIGGERED", rules_to_revoke)
+    remediation_event_data_triggered = generate_remediation_json(sg_id, "TRIGGERED", rules_to_revoke, incident_id)
     post_remediation_status(remediation_event_data_triggered)
 
     if incident_id:
@@ -219,13 +220,13 @@ def lambda_handler(event, context):
     final_status = "SUCCEEDED" if is_revoked else "FAILED"
     incident_final_status = "MITIGATED" if is_revoked else "PROCESSING"
     
-    remediation_event_data_final = generate_remediation_json(sg_id, final_status, rules_to_revoke)
+    remediation_event_data_final = generate_remediation_json(sg_id, final_status, rules_to_revoke, incident_id)
     post_remediation_status(remediation_event_data_final)
 
     if incident_id:
         update_incident_status_in_db(incident_id, incident_final_status)
 
-    print(f"✅ Remediation complete. Status: {final_status}")
+    print(f"Remediation complete. Status: {final_status}")
     
     return {
         'statusCode': 200,
