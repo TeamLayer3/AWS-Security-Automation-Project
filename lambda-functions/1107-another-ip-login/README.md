@@ -14,7 +14,6 @@
 [예: Incident 기록 생성]
 [예: WebSocket 브로드캐스트]
 
----
 
 ## 2. 동작 조건 & 트리거 (Conditions & Trigger)
 ### 이벤트 소스
