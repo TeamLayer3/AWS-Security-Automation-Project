@@ -57,7 +57,7 @@
 ---
 ## 5. 사용 리소스 및 의존성 (Resources & Dependencies) 
 ### 5.1. AWS
-- DynamoDB:
+- DynamoDB
   - security-alerts-state-v2 (베이스라인/last_seen/억제키 저장)
   - WebSocketConnections_v2 (커넥션 목록)
   - Incident (Incident 기록, 필드: details)
@@ -72,9 +72,12 @@
 - Python 3.x, boto3
 ---
 ## 6. IAM 권한 (IAM Permissions)
-### 6.1. CloudWatch Logs: 로그 그룹/스트림 생성 및 로그 쓰기 (CreateLogGroup, CreateLogStream, PutLogEvents)
+### 6.1. CloudWatch Logs
+- 로그 그룹/스트림 생성 및 로그 쓰기
+- CreateLogGroup, CreateLogStream, PutLogEvents
 ### 6.2. STS: GetCallerIdentity
-### 6.3. API Gateway(WebSocket): execute-api:ManageConnections (해당 리전/계정의 WebSocket 스테이지에 대한 커넥션 관리)
+### 6.3. API Gateway(WebSocket)
+- execute-api:ManageConnections (해당 리전/계정의 WebSocket 스테이지에 대한 커넥션 관리)
 ### 6.4. DynamoDB
 - security-alerts-state-v2: GetItem, PutItem (베이스라인/last_seen/억제키 저장·조회)
 - WebSocketConnections_v2: Scan, GetItem, DeleteItem (활성 커넥션 조회 및 정리)
