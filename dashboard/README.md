@@ -1,6 +1,6 @@
 ## AWS Security Operations Dashboard (실시간 보안 관제 대시보드)
 
-AWS 환경에서 발생하는 보안 위협을 **실시간(Real-time)**으로 시각화하고, 자동 대응(Auto-Remediation) 결과를 모니터링하는 보안 관제 대시보드임
+AWS 환경에서 발생하는 보안 위협을 **실시간(Real-time)** 으로 시각화하고, 자동 대응(Auto-Remediation) 결과를 모니터링하는 보안 관제 대시보드임
 
 **AWS Lambda(Serverless) 백엔드**와 **EC2 기반 웹 호스팅**을 결합한 하이브리드 아키텍처로 구성되어 있음
 
@@ -10,14 +10,14 @@ AWS 환경에서 발생하는 보안 위협을 **실시간(Real-time)**으로 �
 
 **AWS EC2 인스턴스**에 대시보드를 배포해 둠. 아래 링크를 클릭하면 즉시 확인 가능함
 
-### 👉 [대시보드 접속하기 (Click)](http://54.235.30.142/dashboard/)
+### [대시보드 접속하기 (Click)](http://54.235.30.142/dashboard/)
 **(URL: http://54.235.30.142/dashboard/)**
 
 ---
 
 ## 테스트용 WebSocket 주소 (Test URLs)
 
-대시보드 접속 후, 아래 주소를 복사하여 **상단 입력창(WebSocket URL)**에 넣고 `저장 및 연결` 버튼을 누르면 됨
+대시보드 접속 후, 아래 주소를 복사하여 **상단 입력창(WebSocket URL)** 에 넣고 `저장 및 연결` 버튼을 누르면 됨
 
 | 용도 (Type) | 주소 (URL) | 설명 |
 | :--- | :--- | :--- |
@@ -31,7 +31,7 @@ AWS 환경에서 발생하는 보안 위협을 **실시간(Real-time)**으로 �
 
 1.  **Event Detection**: CloudTrail/EventBridge가 보안 위협 감지
 2.  **Processing (Serverless)**: Lambda가 탐지 로직 수행 및 대응(Remediation) 실행
-3.  **Push Notification**: Lambda가 **API Gateway (WebSocket)**를 통해 클라이언트로 JSON 데이터 전송
+3.  **Push Notification**: Lambda가 **API Gateway (WebSocket)** 를 통해 클라이언트로 JSON 데이터 전송
 4.  **Visualization (EC2)**: EC2 웹 서버에 호스팅된 대시보드가 데이터를 수신하여 실시간 렌더링
 
 ---
