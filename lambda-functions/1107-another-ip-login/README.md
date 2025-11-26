@@ -1,5 +1,4 @@
 ## 1. 함수 개요 (Overview)
-
 이 Lambda 함수는 AWS ConsoleLogin / AssumeRole 이벤트 중
 **“이 계정·Principal에서 처음 등장한 IP인지”**를 자동으로 탐지하고,
 새로운 IP일 경우:
@@ -34,7 +33,6 @@ KnownIp 테이블에 처음 등장한 IP일 경우
 
 ---
 ## 3. 처리 로직 요약 (Logic Flow)
-
 ### 1. EventBridge → Lambda로 CloudTrail 이벤트 수신
 ### 2. event.detail에서 다음 항목 추출
    - principal 정보
@@ -83,7 +81,7 @@ KnownIp 테이블에 처음 등장한 IP일 경우
    - "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Scan"
 #### 1.2 `WebSocketConnections_V2`
    - "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Scan"
-#### 1.2 `Incident`
+#### 1.3 `Incident`
    - "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Scan"
 ### 2. API Gateway WebSocket 연결 관리 권한
    - execute-api:ManageConnections

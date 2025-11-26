@@ -1,5 +1,4 @@
 ## 1. 함수 개요 (Overview)
-
 이 Lambda 함수는 AWS ConsoleLogin 및 GuardDuty 보안 이벤트를 실시간 감지하여,
 다음 작업을 자동으로 수행한다.
 1. 새로운 디바이스 접근 탐지 (디바이스 지문 기반)
@@ -25,7 +24,6 @@ EventBridge(CloudTrail 기반)
 | ConsoleLogin      | AWS SignIn/STS  | 새로운 디바이스 접근 탐지  |
 | GuardDuty Finding | aws.guardduty.* | GuardDuty 위협 탐지 |
 
-
 ### 동작 조건
 - UA_ONLY
 - UA_IP_PREFIX24
@@ -34,7 +32,6 @@ EventBridge(CloudTrail 기반)
 
 ---
 ## 3. 처리 로직 요약 (Logic Flow)
-
 ### 1. EventBridge → Lambda로 CloudTrail 이벤트 수신
 ### 2. event.detail에서 다음 항목 추출
    - userIdentity(type/principal/user)
@@ -58,11 +55,11 @@ EventBridge(CloudTrail 기반)
 ## 4. 환경 변수 (Environment Variables)
 | 이름                | 예시                                                                                                                     | 설명                        |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| CONNECTIONS_TABLE | WebSocketConnections_V2                                                                                                   | WebSocket 연결 목록 저장        |
-| KNOWN_DEV_TABLE   | KnownDevices                                                                                                           | 디바이스 fingerprint 저장       |
-| WS_ENDPOINT       | https://egtwu3mkhb.execute-api.us-east-1.amazonaws.com/prod | WebSocket API Gateway URL |
-| INCIDENT_TABLE    | Incident                                                                                                               | 인시던트 저장 DynamoDB          |
-| FINGERPRINT_MODE  | UA_ONLY / UA_IP / UA_IP_PREFIX24                                                                                       | 디바이스 지문 생성 모드             |
+| CONNECTIONS_TABLE | `WebSocketConnections_V2`                                                                                                   | WebSocket 연결 목록 저장        |
+| KNOWN_DEV_TABLE   | `KnownDevices`                                                                                                           | 디바이스 fingerprint 저장       |
+| WS_ENDPOINT       | `https://egtwu3mkhb.execute-api.us-east-1.amazonaws.com/prod` | WebSocket API Gateway URL |
+| INCIDENT_TABLE    | `Incident `                                                                                                              | 인시던트 저장 DynamoDB          |
+| FINGERPRINT_MODE  | `UA_ONLY / UA_IP / UA_IP_PREFIX24`                                                                                       | 디바이스 지문 생성 모드             |
 
 
 ---
@@ -90,7 +87,7 @@ EventBridge(CloudTrail 기반)
    - "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Scan", "dynamodb:DeleteItem"
 #### 1.2 `WebSocketConnections_V2`
    - "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Scan", "dynamodb:DeleteItem"
-#### 1.2 `Incident`
+#### 1.3 `Incident`
    - "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Scan", "dynamodb:DeleteItem"
 ### 2. API Gateway WebSocket 연결 관리 권한
    - execute-api:ManageConnections
