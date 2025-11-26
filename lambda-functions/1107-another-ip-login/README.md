@@ -78,37 +78,17 @@ KnownIp 테이블에 처음 등장한 IP일 경우
 
 ---
 ## 6. 필요한 IAM 권한 (Required IAM Permissions)
-아래는 최소 권한 예시이다. 실제 ARN은 계정/리전에 맞게 수정 필요.
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "DynamoDbAccess",
-      "Effect": "Allow",
-      "Action": [
-        "dynamodb:GetItem",
-        "dynamodb:PutItem",
-        "dynamodb:UpdateItem",
-        "dynamodb:Scan"
-      ],
-      "Resource": [
-        "arn:aws:dynamodb:*:ACCOUNT_ID:table/KnownIps",
-        "arn:aws:dynamodb:*:ACCOUNT_ID:table/WebSocketConnections",
-        "arn:aws:dynamodb:*:ACCOUNT_ID:table/Incident"
-      ]
-    },
-    {
-      "Sid": "ManageWebSocketConnections",
-      "Effect": "Allow",
-      "Action": [
-        "execute-api:ManageConnections"
-      ],
-      "Resource": "arn:aws:execute-api:*:ACCOUNT_ID:*/*/@connections/*"
-    }
-  ]
-}
-```
+### 1. DynamoDB 권한
+#### 1.1 `KnownIps`
+   - "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Scan"
+#### 1.2 `WebSocketConnections_V2`
+   - "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Scan"
+#### 1.2 `Incident`
+   - "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Scan"
+### 2. API Gateway WebSocket 연결 관리 권한
+   - execute-api:ManageConnections
+   - Resource : arn:aws:execute-api:us-east-1:*:egtwu3mkhb/prod/POST/@connections/*
+   - WebSocket 대시보드에 실시간 이벤트 push, 연결이 죽은 클라이언트 자동 삭제
 
 ---
 ## 7. 한계 & TODO (Limitations / TODO)

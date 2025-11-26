@@ -85,36 +85,17 @@ EventBridge(CloudTrail 기반)
 
 ---
 ## 6. 필요한 IAM 권한 (Required IAM Permissions)
-아래는 최소 권한 예시이다. 실제 ARN은 계정/리전에 맞게 수정 필요.
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "DynamoDBAccess",
-      "Effect": "Allow",
-      "Action": [
-        "dynamodb:GetItem",
-        "dynamodb:PutItem",
-        "dynamodb:UpdateItem",
-        "dynamodb:Scan",
-        "dynamodb:DeleteItem"
-      ],
-      "Resource": [
-        "arn:aws:dynamodb:*:ACCOUNT_ID:table/WebSocketConnections_V2",
-        "arn:aws:dynamodb:*:ACCOUNT_ID:table/KnownDevices",
-        "arn:aws:dynamodb:*:ACCOUNT_ID:table/Incident"
-      ]
-    },
-    {
-      "Sid": "ManageWebSocketConnections",
-      "Effect": "Allow",
-      "Action": ["execute-api:ManageConnections"],
-      "Resource": "arn:aws:execute-api:*:ACCOUNT_ID:*/*/@connections/*"
-    }
-  ]
-}
-```
+### 1. DynamoDB 권한
+#### 1.1 `KnownDevices`
+   - "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Scan", "dynamodb:DeleteItem"
+#### 1.2 `WebSocketConnections_V2`
+   - "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Scan", "dynamodb:DeleteItem"
+#### 1.2 `Incident`
+   - "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Scan", "dynamodb:DeleteItem"
+### 2. API Gateway WebSocket 연결 관리 권한
+   - execute-api:ManageConnections
+   - Resource : arn:aws:execute-api:us-east-1:*:egtwu3mkhb/prod/POST/@connections/*
+   - WebSocket 대시보드에 실시간 이벤트 push, 연결이 죽은 클라이언트 자동 삭제
 
 ---
 ## 7. 한계 & TODO (Limitations / TODO)
