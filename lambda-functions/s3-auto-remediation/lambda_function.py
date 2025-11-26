@@ -1,3 +1,4 @@
+
 import json
 import os
 import boto3
@@ -201,7 +202,7 @@ def lambda_handler(event, context):
         if e.response["Error"]["Code"] == "NoSuchBucketPolicy":
             print("⚠️ 정책 없음 — 종료")
             update_incident_status(DYNAMODB_CLIENT, INCIDENT_TABLE, inc_id, "MITIGATED", note="정책 없음")
-            post_remediation_status(generate_remediation_json(bucket_name, status="MITIGATED"))
+            post_remediation_status(generate_remediation_json(bucket_name, status="SUCCEEDED"))
             return {"statusCode": 200, "body": "No policy"}
         print(f"❌ 정책 조회 오류: {e}")
         update_incident_status(DYNAMODB_CLIENT, INCIDENT_TABLE, inc_id, "FAILED")
@@ -212,7 +213,7 @@ def lambda_handler(event, context):
     if not is_public_policy(policy):
         print("👍 퍼블릭 위험 아님 — 삭제 불필요")
         update_incident_status(DYNAMODB_CLIENT, INCIDENT_TABLE, inc_id, "MITIGATED", note="퍼블릭 아님")
-        post_remediation_status(generate_remediation_json(bucket_name, status="MITIGATED"))
+        post_remediation_status(generate_remediation_json(bucket_name, status="SUCCEEDED"))
         return {"statusCode": 200, "body": "Not public policy"}
 
     # 정책 삭제
