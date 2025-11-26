@@ -21,7 +21,7 @@ AWS 환경에서 발생하는 보안 위협을 **실시간(Real-time)** 으로 �
 
 | 용도 (Type) | 주소 (URL) | 설명 |
 | :--- | :--- | :--- |
-| **이벤트 탐지**<br>(Event Detection) | `wss://egtwu3mkhb.execute-api.us-east-1.amazonaws.com/prod/` | **(권장)** 실시간 보안 위협 로그가 들어오는 메인 채널 |
+| **이벤트 탐지**<br>(Event Detection) | `wss://egtwu3mkhb.execute-api.us-east-1.amazonaws.com/prod/` | 실시간 보안 위협 로그가 들어오는 메인 채널 |
 | **자동 대응**<br>(Auto-Response) | `wss://3y9ayspfp3.execute-api.us-east-1.amazonaws.com/prod/` | Lambda가 수행한 차단/격리 조치 결과 알림 채널 |
 | **히스토리**<br>(History Log) | `wss://kote8jrryb.execute-api.us-east-1.amazonaws.com/prod/` | 과거 누적된 보안 사고 이력을 조회하는 채널 |
 
