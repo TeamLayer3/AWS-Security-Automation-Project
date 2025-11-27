@@ -356,10 +356,23 @@ def _post_to_ws(endpoint_url_base: str, connections_table_name: str, formatted_b
 
     api = boto3.client("apigatewaymanagementapi", endpoint_url=endpoint_url, region_name=region)
 
-    payloads = []
-    if formatted_bundle.get("v2"):  payloads.append(formatted_bundle["v2"])
-    if formatted_bundle.get("v1"):  payloads.append(formatted_bundle["v1"])
-    if formatted_bundle.get("flat"): payloads.append(formatted_bundle["flat"])
+    # ✅ 여기서부터가 핵심 수정 부분
+    #    v1 / v2 는 전부 버리고, 대시보드가 그대로 사용하는 flat 이벤트만 보낸다.
+    if formatted_bundle.get("flat"):
+        payload = formatted_bundle["flat"]
+    elif formatted_bundle.get("v1") and isinstance(formatted_bundle["v1"], dict):
+        # 혹시 flat 이 없다면 v1.event 를 flat 처럼 사용 (fallback)
+        v1 = formatted_bundle["v1"]
+        payload = v1.get("event", v1)
+    elif formatted_bundle.get("v2") and isinstance(formatted_bundle["v2"], dict):
+        # 마지막 안전장치: v2.data 를 flat 처럼 사용
+        v2 = formatted_bundle["v2"]
+        payload = v2.get("data", v2)
+    else:
+        print("⚠️ formatted_bundle에 전송할 payload가 없음:", formatted_bundle.keys())
+        return
+
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
     table = ddb_resource(endpoint_url_base).Table(connections_table_name)
 
@@ -380,21 +393,18 @@ def _post_to_ws(endpoint_url_base: str, connections_table_name: str, formatted_b
             cid = it.get("connectionId")
             if not cid:
                 continue
-            for p in payloads:
+            try:
+                api.post_to_connection(ConnectionId=cid, Data=data)
+                ok += 1
+            except api.exceptions.GoneException:
+                gone += 1
                 try:
-                    api.post_to_connection(ConnectionId=cid, Data=json.dumps(p, ensure_ascii=False).encode("utf-8"))
-                    ok += 1
-                except api.exceptions.GoneException:
-                    gone += 1
-                    try:
-                        table.delete_item(Key={"connectionId": cid})
-                    except Exception:
-                        pass
-                    break
-                except ClientError as e:
-                    err += 1
-                    print("send error:", e)
-                    break
+                    table.delete_item(Key={"connectionId": cid})
+                except Exception:
+                    pass
+            except ClientError as e:
+                err += 1
+                print("send error:", e)
 
         last_key = resp.get("LastEvaluatedKey")
         if not last_key:
@@ -713,7 +723,7 @@ def handle_auth_impossible_travel(event):
         if u_type == "IAMUser":
             if ACTION_MODE == "full_auto":
                 # 실제 IAM 계정 잠금 시도
-                auto_action = "AccountLocked"
+                auto_action = "로그인 비밀번호 재설정"
                 action_result = auto_block_user(user_arn)
                 meta["result"] = action_result
 
