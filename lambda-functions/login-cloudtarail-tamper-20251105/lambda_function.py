@@ -298,11 +298,14 @@ def generate_incident_id(prefix: str = "inc") -> str:
     rand = random.randint(0, 999)
     return f"{prefix}-{ts}-{rand:03d}"
 
-def put_incident_record(event_type: str,
-                        resource: str,
-                        severity: str,
-                        status: str = "NEW",
-                        created_at=None):
+def put_incident_record(
+    event_type: str,
+    resource: str,
+    severity: str,
+    status: str = "NEW",
+    created_at=None,
+    details: dict | None = None,   # 🔹 details 추가
+):
     """
     Incident 테이블에 히스토리 1건 저장.
     대시보드에서 최종적으로 사용할 JSON 형태와 동일하게 저장한다.
@@ -327,6 +330,11 @@ def put_incident_record(event_type: str,
         "created_at": created,
         "updated_at": created,
     }
+
+    # 🔹 details 필드가 있으면 같이 저장
+    if details:
+        item["details"] = details
+
     try:
         tbl.put_item(Item=item)
         print("✅ Incident stored:", json.dumps(item, ensure_ascii=False))
@@ -624,14 +632,35 @@ def handle_cloudtrail_tamper(event):
         "arn": arn,
     }
 
-    # 🔹 1단계: Incident 히스토리 기록
+    # 🔹 Incident details 구성
     incident_resource = arn or principal_id or ""
+    region = extract_region(event)
+    account_id = extract_account_id(event, {"arn": incident_resource})
+
+    details_for_incident = {
+        "time": when_iso_val,
+        "source": "CloudTrail",
+        "type": "로그인 후 CloudTrail 중지/삭제/설정 변경 시도",
+        "sg": "",
+        "arn": incident_resource,
+        "resource": incident_resource,
+        "account": account_id,
+        "region": region,
+        "alertType": "ALERT",
+        "rulesViolated": [
+            "CLOUDTRAIL_TAMPER_AFTER_LOGIN: 로그인 직후 CloudTrail 설정 변경/중지 시도"
+        ],
+        "severity": "HIGH",
+    }
+
+    # 🔹 1단계: Incident 히스토리 기록
     incident = put_incident_record(
         event_type=payload["event_type"],
         resource=incident_resource,
         severity=payload["severity"],
         status="NEW",
         created_at=when_iso_val,
+        details=details_for_incident,
     )
     if incident:
         payload["incident"] = incident
@@ -692,6 +721,24 @@ def handle_access_key_created(event):
         "arn": user_arn,
     }
 
+    # 🔹 Incident details 구성
+    account_id = extract_account_id(event, {"arn": user_arn})
+    details_for_incident = {
+        "time": when_iso_val,
+        "source": "IAM",
+        "type": "비정상 리전에서 AccessKey 생성",
+        "sg": "",
+        "arn": user_arn,
+        "resource": user_arn,
+        "account": account_id,
+        "region": region,
+        "alertType": "ALERT",
+        "rulesViolated": [
+            f"UNUSUAL_REGION_ACCESS_KEY: 최근 미사용 리전({region})에 새 액세스 키 생성"
+        ],
+        "severity": "HIGH",
+    }
+
     # 🔹 1단계: Incident 히스토리 기록
     incident = put_incident_record(
         event_type=payload["event_type"],
@@ -699,6 +746,7 @@ def handle_access_key_created(event):
         severity=payload["severity"],
         status="NEW",
         created_at=when_iso_val,
+        details=details_for_incident,
     )
     if incident:
         payload["incident"] = incident

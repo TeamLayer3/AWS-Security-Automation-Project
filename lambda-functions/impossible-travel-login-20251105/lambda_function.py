@@ -632,7 +632,7 @@ def handle_auth_impossible_travel(event):
 
     # 🔹 Incident details JSON (요청 포맷)
     account_for_incident = extract_account_id(event, {"principal": user_arn})
-    region_for_incident = event.get("region") or ""
+    region_for_incident = event.get("region") or "us-east-1"
     source_for_incident = normalize_source(
         event.get("source") or (detail.get("eventSource") or "AWS Sign-In/STS")
     )
