@@ -1,4 +1,4 @@
-# file: events_disconnect.py
+# file: history_disconnect.py
 import os, boto3
 from botocore.exceptions import ClientError
 
