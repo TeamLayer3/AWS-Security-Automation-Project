@@ -795,11 +795,27 @@
 
       if(urls.event) {
         const ws = new WebSocket(addAuthParams(urls.event));
-        ws.onopen = () => setStatus('정상 연결됨', 'bg-green-500');
+        ws.onopen = () => {
+            setStatus('정상 연결됨', 'bg-green-500');
+            setInterval(() => {
+                if (ws.readyState === 1) {
+                    ws.send(JSON.stringify({ type: "ping", timestamp: Date.now() }));
+                }
+            }, 30000);
+        };
         ws.onmessage = e => {
           try {
             const d = JSON.parse(e.data);
-            if(d.type === 'ping') { ws.send(JSON.stringify({type:'pong'})); return; }
+
+            if (d.type === 'ping') {
+                //console.log(`Event WS: Ping 받음 -> Pong 보냄`);
+                ws.send(JSON.stringify({ type: "pong" }));
+                return; 
+            }
+            if (d.type === 'pong' || d.body === 'pong') {
+                //console.log(`Event WS: Pong 도착`);
+                return;
+            }
 
             let eventTime = d.time;
             if(typeof eventTime === 'string') eventTime = Date.parse(eventTime);
@@ -826,9 +842,27 @@
 
       if(urls.remed) {
         const ws = new WebSocket(addAuthParams(urls.remed));
+        ws.onopen = () => {
+            setInterval(() => {
+                if (ws.readyState === 1) {
+                    ws.send(JSON.stringify({ type: "ping", timestamp: Date.now() }));
+                }
+            }, 30000);
+        };
         ws.onmessage = e => {
           try {
             const d = JSON.parse(e.data);
+
+            if (d.type === 'ping') {
+                //console.log(`Remed WS: Ping 받음 -> Pong 보냄`);
+                ws.send(JSON.stringify({ type: "pong" }));
+                return; 
+            }
+            if (d.type === 'pong' || d.body === 'pong') {
+                //console.log(`Remed WS: Pong 도착`);
+                return;
+            }
+
             addRemedSafe(d);
           } catch {}
         };
@@ -841,7 +875,7 @@
           ws.send(JSON.stringify({ action: "subscribe", limit: 50 }));
           setInterval(() => {
             if (ws.readyState === 1) {
-                ws.send(JSON.stringify({ action: "ping" }));
+                ws.send(JSON.stringify({ type: "ping", timestamp: Date.now() }));
             }
           }, 30000);
         };
@@ -858,6 +892,16 @@
                 }
             } catch (err) {
                 console.warn("JSON 파싱 실패:", e.data);
+                return;
+            }
+
+            if (d.type === 'ping') {
+                //console.log(`History WS: Ping 받음 -> Pong 보냄`);
+                ws.send(JSON.stringify({ type: "pong" }));
+                return; 
+            }
+            if (d.type === 'pong' || d.body === 'pong') {
+                //console.log(`History WS: Pong 도착`);
                 return;
             }
 
