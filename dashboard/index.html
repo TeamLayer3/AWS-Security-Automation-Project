@@ -567,7 +567,7 @@
       const evBody = document.getElementById('eventsBody');
 
       evBody.innerHTML = sortedEvents.slice(0, 20).map(e => `
-        <tr onclick="showDetail(state.events.find(x => x.time == ${e.time}), 'event')"
+        <tr onclick="showDetail(state.events.events[state.events.indexOf(e)], 'event')"
             class="transition-colors border-b border-[#30363d]/50 hover:bg-[#161b22]
             ${e.severity === 'CRITICAL' ? 'animate-flash' : ''}">
           <td class="px-4 py-3 text-gray-400 font-mono text-xs text-center">
@@ -600,7 +600,7 @@
       const remBody = document.getElementById('remedsBody');
 
       remBody.innerHTML = sortedRemeds.slice(0, 20).map(r => `
-        <tr onclick="showDetail(state.remeds.find(x => x.time == ${r.time}), 'remed')"
+        <tr onclick="showDetail(state.remeds.remeds[state.remeds.indexOf(r)], 'remed')"
             class="border-b border-[#30363d]/50 hover:bg-[#161b22]">
           <td class="px-4 py-3 text-gray-400 font-mono text-xs text-center">
             ${formatTime(r.time)}
