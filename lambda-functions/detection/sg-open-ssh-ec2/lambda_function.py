@@ -584,6 +584,163 @@ def handle_instance_with_open_sg(event):
     post_to_ws_dashboard(dashboard_event)
     return _ret({"status": "alert_sent", "instance_ids": instance_ids, "sgs": world_sg_ids})
 
+def handle_instance_start_with_open_sg(event):
+    """
+    Stop 상태였던 인스턴스를 StartInstances 로 기동할 때,
+    이미 공개 SSH SG가 붙어 있으면 알림 + 인시던트 + 자동대응
+    """
+    detail = event.get("detail", {}) or {}
+    en = detail.get("eventName")
+    if en != "StartInstances":
+        return _ret({"status": "skip_non_startinstances"})
+
+    # 1) StartInstances 이벤트에서 인스턴스 ID 추출
+    instance_ids = []
+    # requestParameters 쪽
+    for it in (safe_get(detail, "requestParameters", "instancesSet", "items", default=[]) or []):
+        iid = it.get("instanceId")
+        if iid:
+            instance_ids.append(iid)
+    # responseElements 쪽도 한 번 더 확인
+    for it in (safe_get(detail, "responseElements", "instancesSet", "items", default=[]) or []):
+        iid = it.get("instanceId")
+        if iid and iid not in instance_ids:
+            instance_ids.append(iid)
+
+    if not instance_ids:
+        return _ret({"status": "no_instance_in_event", "eventName": en})
+
+    account = extract_account_id(event, {})
+    region  = extract_region(event)
+
+    ui         = detail.get("userIdentity", {}) or {}
+    actor_arn  = ui.get("arn") or ui.get("principalId") or "unknown"
+    src_ip     = detail.get("sourceIPAddress")
+    user_agent = detail.get("userAgent")
+    when_iso   = event.get("time") or detail.get("eventTime") or now_iso()
+
+    alerted_instances = []
+
+    for iid in instance_ids:
+        # 2) 인스턴스에 붙은 SG 조회
+        try:
+            resp = ec2_client.describe_instances(InstanceIds=[iid])
+        except ClientError as e:
+            print("describe_instances error:", e)
+            continue
+
+        sg_ids = set()
+        for r in resp.get("Reservations", []):
+            for inst in r.get("Instances", []):
+                if inst.get("InstanceId") != iid:
+                    continue
+                for sg in inst.get("SecurityGroups", []):
+                    gid = sg.get("GroupId")
+                    if gid:
+                        sg_ids.add(gid)
+
+        if not sg_ids:
+            continue
+
+        # 3) 공개 SSH SG 필터링
+        world_sg_ids = filter_world_open_sg_ids(list(sg_ids))
+        if not world_sg_ids:
+            continue
+
+        resource_val = iid
+
+        payload = {
+            "alert_type": "ec2_start_with_open_ssh",
+            "severity": "CRITICAL",
+            "source": "AWS EC2",
+            "event_type": "공개 SG가 연결된 인스턴스가 다시 실행됨",
+            "resource": resource_val,
+            "account": account,
+            "region": region,
+            "sg_ids": world_sg_ids,
+            "sg_id": world_sg_ids[0],
+            "principal": actor_arn,
+            "arn": actor_arn,
+            "api_event": en,
+            "time": when_iso,
+            "raw_event": detail,
+        }
+
+        # Incident details + meta (device/ip/api)
+        incident_details = {
+            "time": when_iso,
+            "source": "EC2",
+            "type": "공개 SG가 연결된 인스턴스가 다시 실행됨",
+            "sg": world_sg_ids[0],
+            "arn": actor_arn,
+            "resource": resource_val,
+            "account": account,
+            "region": region,
+            "alertType": "ALERT",
+            "rulesViolated": ["공개 SG가 연결된 인스턴스가 다시 실행됨"],
+            "severity": "CRITICAL",
+            "meta": {
+                "device": {
+                    "summary": user_agent or "unknown",
+                    "ua": user_agent or ""
+                },
+                "ip": src_ip or "",
+                "api": en or ""   # StartInstances
+            }
+        }
+
+        incident = put_incident_record(
+            event_type="공개 SG가 연결된 인스턴스가 다시 실행됨",
+            resource=resource_val,
+            severity="CRITICAL",
+            status="NEW",
+            created_at=when_iso,
+            details=incident_details,
+            account=account,
+            region=region,
+            source="EC2",
+        )
+        if incident:
+            payload["incident_id"] = incident["incident_id"]
+
+        # 🔔 자동대응 SNS (지금이랑 똑같이 격리 Playbook 호출)
+        if SNS_TOPIC_ARN_AUTOREM:
+            auto_msg = {
+                "time": when_iso,
+                "action": "QuarantineInstance",
+                "target": iid,
+                "playbook": "isolate-ec2",
+                "status": "TRIGGERED",
+                "account": account,
+                "region": region,
+            }
+            if incident:
+                auto_msg["incident_id"] = incident["incident_id"]
+
+            try:
+                sns_client.publish(
+                    TopicArn=SNS_TOPIC_ARN_AUTOREM,
+                    Message=json.dumps(auto_msg),
+                    Subject="EC2 SSH open instance auto remediation (StartInstances)"
+                )
+                print("✅ SNS auto-remediation message published (StartInstances):",
+                      json.dumps(auto_msg, ensure_ascii=False))
+            except Exception as e:
+                print("❌ SNS publish failed (StartInstances):", e)
+
+        dashboard_event = to_dashboard_event(event, payload)
+        post_to_ws_dashboard(dashboard_event)
+        alerted_instances.append(iid)
+
+    if not alerted_instances:
+        return _ret({"status": "no_world_open_sg_on_start", "instances": instance_ids})
+
+    return _ret({
+        "status": "alert_sent_start_open_sg",
+        "instances": alerted_instances,
+        "eventName": "StartInstances"
+    })
+
 def handle_instance_attach_open_sg(event):
     detail = event.get("detail", {}) or {}
     en = detail.get("eventName")
@@ -844,10 +1001,14 @@ def lambda_handler(event, context):
         if src == "aws.ec2" and dt == "AWS API Call via CloudTrail" and en == "RunInstances":
             return handle_instance_with_open_sg(event)
 
+        # stop → start (StartInstances) 시, 이미 공개 SG가 붙어 있던 인스턴스
+        if src == "aws.ec2" and dt == "AWS API Call via CloudTrail" and en == "StartInstances":
+            return handle_instance_start_with_open_sg(event)
+
         # 기존 인스턴스에 SSH Open SG attach
         if src == "aws.ec2" and dt == "AWS API Call via CloudTrail" and en in (
-            "ModifyInstanceAttribute",
-            "ModifyNetworkInterfaceAttribute",   # 🔹 추가
+                "ModifyInstanceAttribute",
+                "ModifyNetworkInterfaceAttribute",
         ):
             return handle_instance_attach_open_sg(event)
 
