@@ -116,7 +116,7 @@ CloudTrail 로그를 실시간으로 분석하여 위협을 탐지하고, WebSoc
 * **이력 관리**: DynamoDB와 연동하여 과거 침해 사고 이력 조회
 
 <div align="center">
-  <img src="images/dashboard_demo.png" width="100%" alt="Dashboard Demo">
+  <img src="images/dashboard_demo.gif" width="100%" alt="Dashboard Demo">
   <p><em>실시간 보안 관제 대시보드 시연 화면</em></p>
 </div>
 <br/>
