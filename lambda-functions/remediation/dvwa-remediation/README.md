@@ -1,122 +1,206 @@
 ## 1. 함수 개요 (Overview)
-이 Lambda 함수는 DVWA 대상 외부 취약점 스캐너 탐지 시 자동 대응(격리) 작업을 수행하고, 그 결과를 WebSocket 대시보드(Actions 채널)로 전송하는 역할을 한다.
-- CloudWatch Alarm(State = `ALARM`) 이벤트 수신
-- DVWA 인스턴스를 격리용 보안 그룹(SG)으로 교체하여 외부 접속 차단
-- 원본 이벤트를 S3에 아카이브
-- 자동대응 결과를 WebSocket(자동대응 로그 영역)으로 브로드캐스트
+이 Lambda 함수는 **DVWA 인스턴스에 대한 외부 취약점 스캐너 탐지 알람(CloudWatch Alarm)** 이 발생했을 때
+아래의 자동대응을 수행하는 역할을 한다.
+
+1. CloudWatch Alarm(스캐너 탐지) 이벤트 수신
+2. 이벤트 원문을 S3 버킷에 아카이브 (로그/증적 보관)
+3. 대상 DVWA EC2 인스턴스를 **격리용 SG 하나만 적용된 상태로 변경(인스턴스 격리/HTTP 차단 효과)**
+4. 자동대응 결과를 **Actions WebSocket 대시보드**로 브로드캐스트
+
+- 추가 특징
+  - ALARM 상태가 아닐 경우(`OK`, `INSUFFICIENT_DATA`)에는 자동대응을 수행하지 않고 `skip` 처리
+  - CloudWatch Alarm ARN에서 `...:alarm` 부분까지만 잘라서 대시보드에 전달 (시각화 단순화)
+  - 아카이브/격리/HTTP 차단 결과를 모두 `details` 필드에 포함하여 대시보드에서 상세 확인 가능
 
 ---
 
 ## 2. 동작 조건 & 트리거 (Conditions & Trigger)
-### 2.1. 이벤트 소스 및 타입
-- `source = "aws.cloudwatch"`
-- `detail-type = "CloudWatch Alarm State Change"`
-- `detail.state.value = "ALARM"` 인 경우에만 자동대응 수행
 
-### 2.2. 트리거
-- 위 조건을 만족하는 CloudWatch Alarm 이벤트를 이 Lambda 로 전달하는 EventBridge Rule 이 설정되어 있어야 한다.
-- 예: DVWA 대상 스캐너 탐지용 메트릭(`dvwa-scanner-detect-20251107` 등)에 대한 CloudWatch Alarm
-
-### 2.3. 전제 조건
-- `DVWA_INSTANCE_ID` 환경변수에 지정된 EC2 인스턴스가 존재해야 함
-- `QUARANTINE_SG_ID` 환경변수에 지정된 격리용 SG가 사전에 생성되어 있어야 함
-- Actions WebSocket 연결 시 `RemediationWebSocketConnections`(또는 v2 테이블)에 `connectionId`가 저장되고 있어야 함
+| 구분                            | 조건                                                                                 | 트리거되는 이벤트(detail-type / state)                              | 설명                                                                 |
+| ----------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| **스캐너 탐지 자동대응 수행**          | `source = aws.cloudwatch`<br>`detail-type = CloudWatch Alarm State Change`       | • `state.value = "ALARM"`                                           | DVWA 스캐너 탐지용 CloudWatch Alarm 이 ALARM 상태가 되었을 때 자동대응 실행 |
+| **스캐너 탐지 알람이지만 ALARM 아님** | `source = aws.cloudwatch`<br>`detail-type = CloudWatch Alarm State Change`       | • `state.value = "OK"` or `"INSUFFICIENT_DATA"` 등 ALARM 이외 상태 | 자동대응을 수행하지 않고 `state_is_xxx` 로그만 남기고 종료                         |
+| **기타 이벤트 (noop)**            | 그 외 모든 이벤트                                                                         | 해당 없음                                                               | 이 Lambda 가 담당하지 않는 이벤트는 `skip` 으로 처리                                  |
 
 ---
 
-## 3. 처리 로직 (Logic) 
-### 3.1. **이벤트 확인**
-- `source` / `detail-type` / `state.value`가 조건에 맞지 않으면 `skip` 리턴
-- `state.value == "ALARM"` 일 때만 이후 단계 진행
+## 3. 처리 로직 (Logic)
 
-### 3.3. S3 아카이브**
-- 수신한 이벤트 전체(JSON)를 `ARCHIVE_BUCKET` 아래 `scanner/{timestamp}-{uuid}.json` 형식의 키로 저장
-- 버킷 미설정 시 아카이브는 생략하고 경고 로그만 남김
+### 3.1 CloudWatch Alarm 필터링 및 상태 체크 (`lambda_handler`)
+- 이벤트 소스/타입 확인  
+  - `event["source"] != "aws.cloudwatch"` 이면 즉시 `skip` 처리  
+  - `event["detail-type"] != "CloudWatch Alarm State Change"` 이면 `skip` 처리
+- 새 상태 추출  
+  - `detail.state.value` 값을 읽어서 `new_state` 로 저장
+- `new_state != "ALARM"` 인 경우  
+  - 자동대응 수행 없이 `{"status": "skip", "reason": f"state_is_{new_state}"}` 로그 후 종료
+- `ALARM` 인 경우에만 아래 3단계 자동대응 + WebSocket 알림 수행
 
-### 3.3. DVWA 인스턴스 격리
-- `DVWA_INSTANCE_ID` 로 EC2 인스턴스 조회
-- 첫 번째 네트워크 인터페이스의 `NetworkInterfaceId` 추출
-- 해당 ENI 의 보안 그룹 목록을 `QUARANTINE_SG_ID` 하나로 교체
-  → 결과적으로 외부에서 DVWA 로의 HTTP 접근이 차단됨
+### 3.2 CloudWatch 이벤트 S3 아카이브 (`archive_event_to_s3`)
+- 목적: 스캐너 탐지 알람 발생 시 **이벤트 원문을 S3 에 JSON 파일로 보존**
+- 동작
+  - `ARCHIVE_BUCKET` 환경변수가 없으면  
+    - `{"warn": "ARCHIVE_BUCKET not set, skip archive"}` 로그 후 skip
+  - 키 형식:  
+    - `scanner/{unix_timestamp}-{uuid}.json`
+  - S3 `put_object` 호출로 이벤트 전체를 pretty JSON 형태로 저장
+- 리턴 구조 예시
+  - 성공: `{"status": "ok", "bucket": "...", "key": "scanner/..."}`  
+  - 실패: `{"status": "error", "error": "..."}`
 
-### 3.4. HTTP 차단 상태 기록
-- 현재 구조에서는 “격리 SG 한 개만 부여” 자체가 HTTP 차단 역할을 하기 때문에 별도의 Ingress 변경 없이 상태만 로그에 기록
+### 3.3 인스턴스 격리 (`quarantine_instance`)
+- 목적: DVWA 인스턴스를 **격리 SG 하나만 연결된 상태**로 변경하여 외부 접근 차단
+- 입력
+  - `instance_id`: `DVWA_INSTANCE_ID` 환경변수에서 주입된 대상 인스턴스 ID
+  - `quarantine_sg_id`: `QUARANTINE_SG_ID` (격리용 SG)
+- 처리 순서
+  - 필수 값 확인: 둘 중 하나라도 없으면 `skip` 하고 로그 남김
+  - `ec2.describe_instances(InstanceIds=[instance_id])` 로 인스턴스 정보 조회
+  - 첫 번째 네트워크 인터페이스(ENI)를 가져와 `NetworkInterfaceId` 추출
+  - `modify_network_interface_attribute` 호출로 `Groups=[quarantine_sg_id]` 로 교체
+- 결과
+  - 성공 시:  
+    ```jsonc
+    {
+      "status": "ok",
+      "instance_id": "i-xxxx",
+      "eni_id": "eni-xxxx",
+      "applied_sg": "sg-xxxx"
+    }
+    ```
+  - 실패 시: `{"status": "error", "error": "..."}`
 
-### 3.5. Actions WebSocket 알림 전송
-- Alarm ARN/Region/Account 정보를 정리해 짧은 ARN(`...:alarm`)과 풀 ARN 생성
-- 자동대응 결과(아카이브 정보, 격리 결과, 상태)를 포함한 페이로드 생성
-- `CONNECTIONS_TABLE_ACTIONS`(예: `RemediationWebSocketConnections`) 을 Scan 해 모든 `connectionId` 조회
-- API Gateway Management API(`WS_ENDPOINT_ACTIONS`) 로 모든 Actions 채널 연결에 브로드캐스트
-- 끊어진 연결(GoneException)은 테이블에서 삭제
+### 3.4 HTTP 차단 처리 (`block_world_http`)
+- 현재 구조에서는 **별도의 SG 규칙 변경 작업 없이**  
+  “격리 SG 하나만 적용”되는 것 자체가 HTTP 차단 효과를 냄
+- 따라서 함수 내부에서는
+  - 추가 API 호출 없이  
+    `{"status": "blocked_by_quarantine_sg", "instance_id": ...}` 형태로 상태만 기록
+- 향후 필요 시, 80/443 포트만 특정 규칙으로 조정하거나 WAF 연동 등으로 확장 가능
+
+### 3.5 Actions WebSocket 브로드캐스트 (`post_to_ws_actions`)
+- 목적: 자동대응 결과를 **Remediation WebSocket 대시보드**에 실시간 전송
+- 환경변수 확인
+  - `WS_ENDPOINT_ACTIONS` 가 없으면 `ws_actions: skip` 후 종료
+  - `CONNECTIONS_TABLE_ACTIONS` 가 없으면 역시 `skip`
+- 엔드포인트/리전 계산
+  - `endpoint_url = WS_ENDPOINT_ACTIONS.rstrip("/")`
+  - URL 에서 `.execute-api.{region}.amazonaws.com` 패턴을 파싱해 리전 추출  
+    (실패 시 `REGION` 기본값 사용)
+- DynamoDB 스캔 + API Gateway 관리 API 호출
+  - `CONNECTIONS_TABLE_ACTIONS` 테이블에서 `connectionId` 만 Projection 으로 `scan`
+  - 각 connectionId 에 대해  
+    `apigatewaymanagementapi.post_to_connection(ConnectionId=..., Data=payload)`
+  - `GoneException` 발생 시 해당 connectionId 를 테이블에서 삭제
+  - 기타 오류는 로그(`send_error`)로만 남기고 카운터 증가
+- 최종 로그 예시
+  ```jsonc
+  {
+    "ws_actions": "done",
+    "ok": 3,
+    "gone": 1,
+    "err": 0
+  }
 
 ---
-## 4. 환경 변수 (Environment Variables) 
-
-| Key                       | 예시 값                                                    | 설명                                                                                     |
-| ------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `ARCHIVE_BUCKET`         | `layer3-dvwa-scanner-archive`                             | 스캐너 탐지 이벤트 원문을 저장할 S3 버킷 이름. `scanner/{timestamp}-{uuid}.json` 로 저장 |
-| `CONNECTIONS_TABLE_ACTIONS` | `RemediationWebSocketConnections`                         | **자동대응(Actions)용 WebSocket 연결 정보가 저장된 DynamoDB 테이블 이름**               |
-| `DVWA_INSTANCE_ID`       | `i-0878037a43d4895d0`                                     | 격리 대상 DVWA EC2 인스턴스 ID                                                           |
-| `QUARANTINE_SG_ID`       | `sg-08af46f4a407ece7b`                                    | 격리 시 적용할 **격리용 보안 그룹 ID**                                                   |
-| `REGION`                 | `us-east-1`                                               | 기본 AWS 리전. 설정 없을 경우 `AWS_REGION` 또는 `us-east-1` 사용                        |
-| `STATE_TABLE`            | `security-alerts-state-v2`                                | 보안 알림 상태 저장용 DynamoDB 테이블 이름. **현재 이 함수 코드에서는 직접 사용하지 않음** |
-| `WS_ENDPOINT_ACTIONS`    | `https://3y9ayspfp3.execute-api.us-east-1.amazonaws.com/prod/` | Actions WebSocket API Gateway 엔드포인트 URL (stage 포함, 끝에 `/` 포함 권장)           |
-
----
-## 5. 사용 리소스 및 의존성 (Resources & Dependencies) 
-
-### 5.1. AWS 리소스
-- Amazon EC2
-  - `DVWA_INSTANCE_ID` 로 지정된 인스턴스 조회 및 네트워크 인터페이스 수정
-  - `QUARANTINE_SG_ID` 를 ENI 에 적용하여 격리
-- Amazon S3
-  - `ARCHIVE_BUCKET` 에 이벤트 원문(JSON) 객체 저장
-- Amazon DynamoDB
-  - `CONNECTIONS_TABLE_ACTIONS` (예: `RemediationWebSocketConnections_v2`)  
-    - 파티션 키: `connectionId`  
-    - WebSocket 연결/해제 Lambda 가 관리하는 테이블
-- Amazon API Gateway (WebSocket)
-  - `WS_ENDPOINT_ACTIONS` 로 접근하는 WebSocket Management API  
-    - `post_to_connection` 호출로 Actions 채널 클라이언트에 메시지 전송
-- Amazon EventBridge
-  - CloudWatch Alarm State Change 이벤트를 이 Lambda 로 라우팅하는 Rule
-- Amazon CloudWatch Logs
-  - Lambda 실행 및 자동대응 결과 로그 기록
-
-### 5.2. 런타임 및 라이브러리
-  - Python 3.x (Lambda 런타임)
-  - 표준 라이브러리: `os`, `json`, `time`, `uuid`, `re`
-  - AWS SDK: `boto3`, `botocore.exceptions`
+## 4. 환경 변수 (Environment Variables)
+| Key                         | Value                                                       | 설명                                                                                    |
+| --------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `ARCHIVE_BUCKET`            | `layer3-security-archive`                                      | 스캐너 탐지 CloudWatch 이벤트 원문을 아카이브할 S3 버킷 이름                                              |
+| `CONNECTIONS_TABLE_ACTIONS` | `RemediationWebSocketConnections`                              | **자동대응(액션) WebSocket** 연결 ID 를 저장하는 DynamoDB 테이블명                                     |
+| `DVWA_INSTANCE_ID`          | `i-0ac2cbc9d6a8afc46`                                          | 격리 대상인 DVWA EC2 인스턴스 ID                                                               |
+| `QUARANTINE_SG_ID`          | `sg-08af46f4a407ece7b`                                         | 격리용 Security Group ID (외부 접근이 차단된 SG)                                                 |
+| `REGION`                    | `us-east-1`                                                    | (선택) 강제로 사용할 리전. 없으면 `AWS_REGION` 사용, 둘 다 없으면 기본값 `us-east-1`                         |
+| `WS_ENDPOINT_ACTIONS`       | `https://egtwu3mkhb.execute-api.us-east-1.amazonaws.com/prod/` | Remediation WebSocket API 의 관리 엔드포인트 (`/prod` 까지 포함, `apigatewaymanagementapi` 에서 사용) |
+| `STATE_TABLE`               | `security-alerts-state-v2`                                     | **현재 이 코드에서는 직접 사용하지 않음.** 향후 자동대응 상태 관리용으로 확장 예정인 예약 변수                              |
 
 ---
+## 5. 사용 리소스 및 의존성 (Resources & Dependencies)
+
+### 5.1 AWS 리소스
+
+#### **EC2**
+- `DescribeInstances`, `ModifyNetworkInterfaceAttribute`  
+  → 대상 인스턴스/ENI 조회 및 SG 교체에 사용됨
+
+#### **S3**
+- `ARCHIVE_BUCKET` 에 CloudWatch Alarm 이벤트(JSON)를 저장
+
+#### **DynamoDB**
+- `CONNECTIONS_TABLE_ACTIONS`  
+  → WebSocket connectionId 목록 관리 및 Scan
+
+#### **API Gateway WebSocket**
+- `WS_ENDPOINT_ACTIONS`  
+  → WebSocket API의 `@connections/*` 엔드포인트로 알림 전송
+
+#### **CloudWatch Logs**
+- Lambda 실행 로그 및 디버깅 정보 기록
+
+
+### 5.2 코드/라이브러리 의존성
+
+#### **Python 표준 라이브러리**
+- os  
+- json  
+- time  
+- uuid  
+- re  
+
+#### **외부 라이브러리**
+- boto3  
+- botocore.exceptions.ClientError  
+- botocore.exceptions.BotoCoreError  
+
+---
+
 ## 6. IAM 권한 (IAM Permissions)
-### 6.1. EC2 / S3 / WAF / CloudWatch Logs 관련 관리형 정책
-- `AWSWAFConsoleFullAccess`  
-  - 현재 코드에서는 직접 WAF API를 호출하지 않지만, 향후 WAF 기반 자동대응 확장을 위해 부여
-- `CloudWatchLogsReadOnlyAccess`  
-  - CloudWatch Logs 조회용. (실제로는 Lambda 실행 로그 작성을 위해 `AWSLambdaBasicExecutionRole` 도 함께 필요)
 
-### 6.2. DynamoDB & WebSocket 전송용 커스텀 정책
-- DynamoDB (`RemediationWebSocketConnections_v2`)
-  - `dynamodb:Scan`, `dynamodb:DeleteItem`  
-  - 리소스: `arn:aws:dynamodb:us-east-1:021417007719:table/RemediationWebSocketConnections_v2`  
-    → Actions WebSocket 연결 목록 조회 및 끊어진 연결 삭제 용도
-- API Gateway WebSocket Management API
-  - `execute-api:ManageConnections`  
-  - 리소스: `arn:aws:execute-api:us-east-1:021417007719:egtwu3mkhb/prod/POST/@connections/*`  
-    → WebSocket 클라이언트로 메시지 전송 및 연결 관리
+### 6.1 EC2 권한
+대상 인스턴스 ENI 조회 및 SG 변경에 필요:
 
-### 6.3. 기본 Lambda 실행 역할
-- CloudWatch Logs 로그 생성을 위한 `AWSLambdaBasicExecutionRole` (또는 동등한 권한) 필요
+- `ec2:DescribeInstances`
+- `ec2:ModifyNetworkInterfaceAttribute`
 
+### 6.2 S3 권한
+CloudWatch 이벤트 JSON 저장:
+
+- 리소스:  
+  `arn:aws:s3:::<ARCHIVE_BUCKET>/*`
+- 필요한 액션:
+  - `s3:PutObject`
+
+### 6.3 DynamoDB 권한
+`CONNECTIONS_TABLE_ACTIONS` 접근:
+
+- `dynamodb:Scan`
+- `dynamodb:DeleteItem`
+- (선택) `dynamodb:DescribeTable`  
+  → 운영/디버그 편의성
+
+### 6.4 API Gateway WebSocket 권한
+WebSocket connectionId 로 메시지를 전송하기 위해 필요:
+
+- 리소스 예시  
+  `arn:aws:execute-api:us-east-1:<ACCOUNT_ID>:<API_ID>/prod/POST/@connections/*`
+- 권장 액션
+  - `execute-api:ManageConnections`
+
+### 6.5 CloudWatch Logs (Lambda 기본 실행 역할)
+Lambda 실행 로그 기록용:
+
+- `logs:CreateLogGroup`
+- `logs:CreateLogStream`
+- `logs:PutLogEvents`
+- 
 ---
 ## 7. 한계 및 향후 과제 (Limitations & TODO)
-
-| 한계                                                                                             | 향후 과제                                                                                                     |
-| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| CloudWatch Alarm 이 `ALARM` 상태일 때에만 동작하며, 다른 보안 이벤트(GuardDuty, Security Hub 등)는 처리하지 않음 | GuardDuty / Security Hub / AWS Config 등 다양한 탐지 소스와 연동하여 자동대응 범위 확장                      |
-| EC2/S3 에 **FullAccess 관리형 정책**을 사용하여 최소 권한 원칙(Least Privilege)에 부합하지 않음     | 실제 사용 API만 포함하는 커스텀 IAM 정책으로 교체하여 권한을 최소화                                         |
-| DynamoDB 테이블을 **Scan** 으로 전체 조회하므로 WebSocket 연결 수가 많아질수록 비용·지연이 증가할 수 있음 | 파티션키 설계 개선, `Query` 기반 조회 또는 Connection 수가 많을 때는 배치/스트림 기반 브로드캐스트 구조 도입 |
-| STATE_TABLE 환경변수는 정의되어 있으나 이 함수에서는 사용하지 않아 상태 관리 기능이 부족함         | remediation 상태(성공/실패, 재시도 정보 등)를 STATE_TABLE 에 기록하는 로직 추가                              |
-| 실패한 WebSocket 전송, EC2/ S3 작업에 대한 재시도/보상 처리 로직이 단순 로그 출력에 그침          | Dead Letter Queue(SQS) 및 재처리 Lambda를 도입해 안정적인 실패 처리 및 모니터링 강화                        |
-| 현재는 단일 인스턴스(DVWA)와 단일 격리 SG 만 고려하고 있어 멀티 인스턴스/멀티 테넌트 환경 대응이 어려움 | 인스턴스·알람 매핑 정보를 DynamoDB 등에 정의하여 리소스별로 다른 격리 정책을 적용할 수 있도록 구조 확장      |
+| 한계                                                                 | 향후 과제                                                                 |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| 현재는 **고정된 하나의 DVWA 인스턴스 ID(DVWA_INSTANCE_ID)** 에 대해서만 자동대응 수행      | CloudWatch Alarm 메트릭/Tag 를 기반으로 여러 인스턴스를 동적으로 찾아 격리할 수 있도록 확장         |
+| 인스턴스에 ENI 가 여러 개 있는 경우, **첫 번째 ENI 에만 격리 SG 적용**                   | 모든 ENI 를 순회하며 동일한 격리 SG 를 적용하거나, 특정 서브넷/ENI 패턴에 따라 선택적으로 격리하도록 개선     |
+| 격리 이후 **롤백(원래 SG 복구)** 로직이 없다                                      | 수동/자동 롤백을 위한 원래 SG 스냅샷 저장 및 복구 API 설계                                 |
+| `STATE_TABLE` 환경변수가 있지만, **현재 실제 코드에서는 사용되지 않음**                   | 자동대응 이력/상태(이미 격리된 인스턴스 여부, 최근 N분 간 대응 여부 등)를 STATE_TABLE 에 기록하는 로직 추가 |
+| WebSocket 브로드캐스트 시 단순 `scan + 전송` 만 수행, **재시도/지수 백오프/배치 전송 전략 부재** | 대량 연결 환경에서도 안정적인 전송을 위해 실패 재시도, 배치 처리, 전송 실패 지표 수집 추가                 |
+| CloudWatch Alarm 의 **정확한 조건/임계치** 에 따라 오탐/미탐 가능성이 존재               | 스캐너 트래픽 패턴을 기반으로 메트릭/임계치를 지속적으로 튜닝하고, GuardDuty 등 다른 탐지 소스와 연계하여 보완   |
+| S3 아카이브 파일이 증가해도 별도 LifeCycle/만료 정책이 없어 **장기적으로 스토리지 비용 증가 가능성**   | S3 Lifecycle Rule 로 `scanner/` prefix 에 대해 일정 기간 후 Glacier/삭제 정책 설정   |
